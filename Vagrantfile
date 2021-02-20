@@ -3,7 +3,7 @@
 
 servers = [
     {
-        :name => "k8s-head",
+        :name => "k8s-master",
         :type => "master",
         :box => "ubuntu/xenial64",
         :box_version => "20180831.0.0",
@@ -17,7 +17,7 @@ servers = [
         :box => "ubuntu/xenial64",
         :box_version => "20180831.0.0",
         :eth1 => "192.168.205.11",
-        :mem => "2048",
+        :mem => "4096",
         :cpu => "2"
     },
     {
@@ -26,7 +26,7 @@ servers = [
         :box => "ubuntu/xenial64",
         :box_version => "20180831.0.0",
         :eth1 => "192.168.205.12",
-        :mem => "2048",
+        :mem => "4096",
         :cpu => "2"
     }
 ]
@@ -34,16 +34,10 @@ servers = [
 # This script to install k8s using kubeadm will get executed after a box is provisioned
 $configureBox = <<-SCRIPT
 
-    # install docker v17.03
-    # reason for not using docker provision is that it always installs latest version of the docker, but kubeadm requires 17.03 or older
     apt-get update
     apt-get install -y apt-transport-https ca-certificates curl software-properties-common
-    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | apt-key add -
-    add-apt-repository "deb https://download.docker.com/linux/$(. /etc/os-release; echo "$ID") $(lsb_release -cs) stable"
-    apt-get update && apt-get install -y docker-ce=$(apt-cache madison docker-ce | grep 17.03 | head -1 | awk '{print $3}')
-
-    # run docker commands as vagrant user (sudo not required)
-    usermod -aG docker vagrant
+    apt install -y gcc perl build-essential dkms linux-headers-$(uname -r)
+    apt install -y ebtables ethtool
 
     # install kubeadm
     apt-get install -y apt-transport-https curl
@@ -51,9 +45,16 @@ $configureBox = <<-SCRIPT
     cat <<EOF >/etc/apt/sources.list.d/kubernetes.list
     deb http://apt.kubernetes.io/ kubernetes-xenial main
 EOF
+    
+
     apt-get update
-    apt-get install -y kubelet kubeadm kubectl
-    apt-mark hold kubelet kubeadm kubectl
+    apt-get install -y kubelet kubeadm kubectl docker.io
+    
+    # run docker commands as vagrant user (sudo not required)
+    usermod -aG docker vagrant
+    
+    systemctl enable docker
+    systemctl start docker
 
     # kubelet requires swap off
     swapoff -a
@@ -64,7 +65,7 @@ EOF
     # ip of this box
     IP_ADDR=`ifconfig enp0s8 | grep Mask | awk '{print $2}'| cut -f2 -d:`
     # set node-ip
-    sudo sed -i "/^[^#]*KUBELET_EXTRA_ARGS=/c\KUBELET_EXTRA_ARGS=--node-ip=$IP_ADDR" /etc/default/kubelet
+    sudo sed -i "/^[^#]*KUBELET_EXTRA_ARGS=/c\KUBELET_EXTRA_ARGS=--node-ip=$IP_ADDR" /usr/bin/kubelet
     sudo systemctl restart kubelet
 SCRIPT
 
@@ -84,8 +85,9 @@ $configureMaster = <<-SCRIPT
 
     # install Calico pod network addon
     export KUBECONFIG=/etc/kubernetes/admin.conf
-    kubectl apply -f https://raw.githubusercontent.com/ecomm-integration-ballerina/kubernetes-cluster/master/calico/rbac-kdd.yaml
-    kubectl apply -f https://raw.githubusercontent.com/ecomm-integration-ballerina/kubernetes-cluster/master/calico/calico.yaml
+    #kubectl apply -f https://raw.githubusercontent.com/ecomm-integration-ballerina/kubernetes-cluster/master/calico/rbac-kdd.yaml
+    #kubectl apply -f https://raw.githubusercontent.com/ecomm-integration-ballerina/kubernetes-cluster/master/calico/calico.yaml
+    kubectl apply -f https://docs.projectcalico.org/v3.14/manifests/calico.yaml
 
     kubeadm token create --print-join-command >> /etc/kubeadm_join_cmd.sh
     chmod +x /etc/kubeadm_join_cmd.sh
@@ -116,7 +118,7 @@ Vagrant.configure("2") do |config|
             config.vm.provider "virtualbox" do |v|
 
                 v.name = opts[:name]
-            	 v.customize ["modifyvm", :id, "--groups", "/Ballerina Development"]
+            	v.customize ["modifyvm", :id, "--groups", "/K8Cluster"]
                 v.customize ["modifyvm", :id, "--memory", opts[:mem]]
                 v.customize ["modifyvm", :id, "--cpus", opts[:cpu]]
 
